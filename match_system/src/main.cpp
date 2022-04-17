@@ -2,16 +2,19 @@
 // You should copy it to another filename to avoid overwriting it.
 
 #include "match_server/Match.h"
+#include "save_client/Save.h"
 #include <thrift/protocol/TBinaryProtocol.h>
 #include <thrift/server/TSimpleServer.h>
 #include <thrift/transport/TServerSocket.h>
 #include <thrift/transport/TBufferTransports.h>
+#include <thrift/transport/TSocket.h>
+#include <thrift/transport/TTransportUtils.h>
 
 #include <iostream>
 #include <thread>       // 多线程
 #include <mutex>        // 锁 -> 用来实现消息队列
 #include <condition_variable>   // 条件变量，配合锁可以更容易地实现消息队列
-                                // 条件变量的作用：对锁进行封装
+// 条件变量的作用：对锁进行封装
 #include <queue>        // 可以用锁和条件变量将普通队列包装成消息队列
 #include <vector>
 
@@ -20,8 +23,8 @@ using namespace ::apache::thrift::protocol;
 using namespace ::apache::thrift::transport;
 using namespace ::apache::thrift::server;
 
-using namespace  ::match_service;
-
+using namespace ::match_service;
+using namespace ::save_service;
 
 struct Task {
     User user;
@@ -38,6 +41,28 @@ class Pool {
     public:
         void save_result(int a, int b) {
             printf("Match Result: %d %d\n", a, b);
+
+
+
+            std::shared_ptr<TTransport> socket(new TSocket("123.57.47.211", 9090));
+            std::shared_ptr<TTransport> transport(new TBufferedTransport(socket));
+            std::shared_ptr<TProtocol> protocol(new TBinaryProtocol(transport));
+            SaveClient client(protocol);
+
+            try {
+                transport->open();
+
+                int ans = client.save_data("acs_1985", "fa1ca971", a, b);
+                if (!ans) puts("success");
+                else puts("failed");
+
+                transport->close();
+            } catch (TException& tx) {
+                std::cout << "ERROR: " << tx.what() << std::endl;
+            }
+
+
+
         }
         void match() {
             while (users.size() > 1) {
