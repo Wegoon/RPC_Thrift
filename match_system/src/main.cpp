@@ -6,7 +6,14 @@
 #include <thrift/server/TSimpleServer.h>
 #include <thrift/transport/TServerSocket.h>
 #include <thrift/transport/TBufferTransports.h>
+
 #include <iostream>
+#include <thread>       // 多线程
+#include <mutex>        // 锁 -> 用来实现消息队列
+#include <condition_variable>   // 条件变量，配合锁可以更容易地实现消息队列
+                                // 条件变量的作用：对锁进行封装
+#include <queue>        // 可以用锁和条件变量将普通队列包装成消息队列
+#include <vector>
 
 using namespace ::apache::thrift;
 using namespace ::apache::thrift::protocol;
@@ -14,6 +21,48 @@ using namespace ::apache::thrift::transport;
 using namespace ::apache::thrift::server;
 
 using namespace  ::match_service;
+
+
+struct Task {
+    User user;
+    std::string type;
+};
+
+struct MessageQueue {
+    std::queue<Task> q;
+    std::mutex m;
+    std::condition_variable cv;
+}message_queue;
+
+class Pool {
+    public:
+        void save_result(int a, int b) {
+            printf("Match Result: %d %d\n", a, b);
+        }
+        void match() {
+            while (users.size() > 1) {
+                auto a = users[0], b = users[1];
+                users.erase(users.begin());
+                users.erase(users.begin());
+
+                save_result(a.id, b.id);
+            }
+        }
+        void add(User user) {
+            users.push_back(user);
+        }
+        void remove(User user) {
+            for (uint32_t i = 0; i < users.size(); i++) {
+                if (users[i].id == user.id) {
+                    users.erase(users.begin() + i);
+                    break;
+                }
+            }
+        }
+    private:
+        std::vector<User> users;
+}pool;
+
 
 class MatchHandler : virtual public MatchIf {
     public:
@@ -26,6 +75,11 @@ class MatchHandler : virtual public MatchIf {
             printf("add_user\n");
 
 
+            // 用message_queue里的锁m上锁，这样写有个好处，不用显示解锁，因为当函数执行完的时候，这个锁会自动打开
+            std::unique_lock<std::mutex> lck(message_queue.m);
+            message_queue.q.push({user, "add"});
+            message_queue.cv.notify_all();  // 唤醒所有被条件变量卡住的线程
+
             return 0;
         }
 
@@ -34,11 +88,38 @@ class MatchHandler : virtual public MatchIf {
             printf("remove_user\n");
 
 
+            // 用message_queue里的锁m上锁，这样写有个好处，不用显示解锁，因为当函数执行完的时候，这个锁会自动打开
+            std::unique_lock<std::mutex> lck(message_queue.m);
+            message_queue.q.push({user, "remove"});
+            message_queue.cv.notify_all();
 
             return 0;
         }
 
 };
+
+void consume_task() {
+    while (true) {
+        std::unique_lock<std::mutex> lck(message_queue.m);
+        if (message_queue.q.empty()) {
+            message_queue.cv.wait(lck);
+        } else {
+            auto task = message_queue.q.front();
+            message_queue.q.pop();
+            lck.unlock();
+
+            // do task
+            if (task.type == "add") {
+                pool.add(task.user);
+            } else if (task.type == "remove") {
+                pool.remove(task.user);
+            }
+            pool.match();
+        }
+    }
+}
+
+
 
 int main(int argc, char **argv) {
     int port = 9090;
@@ -52,6 +133,9 @@ int main(int argc, char **argv) {
 
 
     std::cout << "Start Match Server" << std::endl;
+
+    std::thread matching_thread(consume_task);
+
 
     server.serve();
     return 0;
