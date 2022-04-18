@@ -65,29 +65,43 @@ class Pool {
             } catch (TException& tx) {
                 std::cout << "ERROR: " << tx.what() << std::endl;
             }
-
-
-
         }
+
+        bool check_match(uint32_t i, uint32_t j) {
+            auto a = users[i], b = users[j];
+            int dt = abs(a.score - b.score);
+            int a_max_dif = wt[i] * 50;
+            int b_max_dif = wt[j] * 50;
+            return dt <= a_max_dif && dt <= b_max_dif;
+        }
+
         void match() {
+            for (uint32_t i = 0; i < wt.size(); i++) {
+                wt[i]++;    // 等待秒数 + 1
+            }
             while (users.size() > 1) {
-                sort(users.begin(), users.end(), [&](User a, User b) {
-                        return a.score < b.score;
-                        });
                 bool flag = true;
-                for (uint32_t i = 1; i < users.size(); i++) {
-                    auto a = users[i - 1], b = users[i];
-                    if (b.score - a.score <= 50) {
-                        users.erase(users.begin() + i - 1, users.begin() + i + 1);
-                        save_result(a.id, b.id);
-                        flag = false;
+                for (uint32_t i = 0; i < users.size(); i++) {
+                    for (uint32_t j = i + 1; j < users.size(); j++) {
+                        if (check_match(i, j)) {
+                            auto a = users[i], b = users[j];
+                            users.erase(users.begin() + j);
+                            users.erase(users.begin() + i);
+                            wt.erase(wt.begin() + j);
+                            wt.erase(wt.begin() + i);
+                            save_result(a.id, b.id);
+                            flag = false;
+                            break;
+                        }
                     }
+                    if (!flag) break;
                 }
                 if (flag) break;
             }
         }
         void add(User user) {
             users.push_back(user);
+            wt.push_back(0);
         }
         void remove(User user) {
             for (uint32_t i = 0; i < users.size(); i++) {
@@ -99,6 +113,7 @@ class Pool {
         }
     private:
         std::vector<User> users;
+        std::vector<int> wt;    // waiting_time，等待时间，单位：秒
 }pool;
 
 
@@ -155,7 +170,6 @@ void consume_task() {
             } else if (task.type == "remove") {
                 pool.remove(task.user);
             }
-            pool.match();
         }
     }
 }
